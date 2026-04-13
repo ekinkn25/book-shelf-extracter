@@ -1,254 +1,550 @@
-import 'package:flutter/material.dart'; //flutterın en temel ui kütüphanesidir googlenin material design tasarım dilini içerir(widget)
-import 'package:image_picker/image_picker.dart';
-import 'dart:io'; // dart dilinin standart input output kütüpanesidir 
-//biz bunu  ileride seçtiğimiz resmi bir file objesi olarak tutmak ve okumak içn kullanacağız mobil uyg harika çalışır ama web tarayıcılarında dosya sist farklı old için webde doğrudan kullanılamaz
-import 'package:flutter/foundation.dart' show kIsWeb; //bu bize şuan uygulamaının o an bi web tarayıcısında mı yoksa mobilde mi çalıştığını söyler, webdeysek resmi şöyle gönder mobildeysek böyle göster diyebilmek için ihtiyacımız var
-import 'package:http/http.dart' as http; //http kullanmadan önce hep http. yazılacak 
 import 'dart:convert';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'dart:typed_data';
 
+// dart:io YOK — web'de patlıyordu, tamamen kaldırıldı.
+// Resim gösterimi için Image.memory + readAsBytes() kullanıyoruz.
+
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:google_generative_ai/google_generative_ai.dart';
+import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
+import 'package:excel/excel.dart' as xl;
+import 'package:universal_html/html.dart' as html;
+
+// ─────────────────────────────────────────────
+// Kitap modeli: Gemini'den ve Google Books'tan
+// gelen veriyi bir arada tutmak için.
+// ─────────────────────────────────────────────
+class BookResult {
+  final String rawTitle;       // Gemini'nin okuduğu ham isim
+  final String? confirmedTitle; // Google Books'un onayladığı resmi ad
+  final String? author;         // Google Books'tan gelen yazar
+  final bool found;             // Google Books'ta bulundu mu?
+
+  BookResult({
+    required this.rawTitle,
+    this.confirmedTitle,
+    this.author,
+    required this.found,
+  });
+}
+
+// ─────────────────────────────────────────────
+// main: dotenv yükle, uygulamayı başlat
+// ─────────────────────────────────────────────
 Future<void> main() async {
-  // Uygulama başlamadan önce .env dosyasını yüklüyoruz
+  WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: ".env");
-  
   runApp(const MyApp());
 }
 
-void main() { //derleyici kodu ilk mainden okumaya başlar
-  runApp(const MyApp()); //görevi içine verdiğimiz ana iskeleti MyApp alıp ekrana çizmektir (render etmek)
-}
-
-//flutterda her şey widget ekranda gördüğümüz buton metin ortalama hizalaması boşluk hepsi widget sınıfı ve iç içe geçerek bi widget ağacı oluştururlar
-class MyApp extends StatelessWidget { //extends StatelessWidget  demek bu sınıftan türetiyoruz demek
-//iki ana tür widget var 
-//1)StatelessWidget (Durumsuz): Ekrana bir kere çizilir ve kendi iç dinamikleriyle değişmez (Örn: Sadece bir metin veya bir ikon)
-
-//2)StatefulWidget (Durumlu): İçindeki veri değiştiğinde kendini yeniden ekrana çizebilen yapılar (Örn: Bir sayacın artması veya bir resmin yüklenip ekranda belirmesi).
-  const MyApp({Key? key}) : super(key: key); //MyApp sınıfının kurucu (constructor) metodudur.
-  //key : flutterin arka planda o widgeti tanımak ve takip etmek için kullandığı bir kimliktir 
-  //const ise bu sınıf sabit beni bir daha baştan çizerek yorma der ve performansı arttırır
+class MyApp extends StatelessWidget {
+  const MyApp({Key? key}) : super(key: key);
 
   @override
-  Widget build(BuildContext context) {//flutterda her sınıf zorunlu build metodu olmalı bu fonksiyon erkana ne çizdireceğizi döndürür
-  //BuildContext contextbu widgetin ağaç yapısında nerede old ebeveynleri kim
-    return MaterialApp( //ana çatı MaterialApp(...)
-      title: 'Library to Excel', //uygulamanın osteki adı webde çalışıtırırken de tarayıcı sekmesinde bu yazar telefonda ise arka planda çalışan uygulamalar menüsünde bu isim görünür
-      debugShowCheckedModeBanner: false, //üstte sağda debug yazısı yazmasın der
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Library to Excel',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        primarySwatch: Colors.purple, // uygulamanın ana rengi butonlar yükleme animasyonları uyg barları vs aksi belirtilmedikçe mor olur 
-        useMaterial3: true, //googlenin güncel moder ui kütüp olan material 3 standartlarını aktivite eder yumuşak köşeler modern renk atamaları
+        colorSchemeSeed: Colors.deepPurple,
+        useMaterial3: true,
+        brightness: Brightness.light,
       ),
-      home: const HomePage(), //uyg açıldığında ekrana gelecek ilk sayfayı ana sayfayı belirtir
+      home: const HomePage(),
     );
   }
 }
 
-class HomePage extends StatefulWidget { //reactdaki state mantığıyla aynıdır state değişebilir home pagede o yüzden stateful dedi
-  const HomePage({Key? key}) : super(key: key);
-  //dışarıdan parametre beklemiyoruz sadece arka planda flutterın bu sayfayı takip edebilmesi için bi key alıp üst sınıfa iletiyor
-
-  @override
-  State<HomePage> createState() => _HomePageState();
-  //Flutterda statefulwidget iki parçadan oluşur 
-  //1. widgetin kendisi HomePage: sadece konfigrasyonu tutar sabittir immutable
-  //2. state nesnesi _HomePageState asıl veriyi seçilen resim vb ve ekranı çizen kodları tutar değişebilen mutable kısım burası
-  //createState() fonskiyonu fluttera şunu der benim içimdeki veriler ve tasarımım _HomePageState adında başka sınıfa yönetilecek git onu oluştur der
-  //alt tire şı anlama geliyor dart dişinde public private protected gibi şeyler yok onun yerine _ konulan değişken/fonk/sınıf o sadece bulunduğu dosta içinden erişilebilir yani private yani _homaPageState sınıfı sadece bu main.dart dosyası içinde yaşayabilir dışarıdan başka dosya onu çağıramaz encapsulation
-} //özellikle bu blok diyor ki fluttera benim verilerim değişecek o yüzden ana bi state objesi bağla diyor ve işi _HomePageState sınıfına devrediyor. yani veriler _HomePAgeState sınıfında
-
-class _HomePageState extends State<HomePage> {//HomePage widgetinin state classi, sayfanın hafızası, kullanıcı sayfadayken değişecek olan tüm veriler burada yaşar
+// ─────────────────────────────────────────────
+// Ana sayfa state'i
+// ─────────────────────────────────────────────
+class _HomePageState extends State<HomePage> {
   XFile? _selectedImage;
-  //XFile bu image_picker paketinin sunduğu özel dosya türü, ? : dart is null-safe yani b uvariable içi şuan boş null olabilir demek 
+  Uint8List? _imageBytes; // dart:io'suz resim gösterimi için
   final ImagePicker _picker = ImagePicker();
-  //instance alıyoruz başına final koyduk çünkü bu aletin referansı uyg çalıştığı sürece hiç değişmeyecek
-  String? _extractedText; // API'den dönecek olan okunan yazıyı tutacak
-  List<String> _bookLines = [];
-  bool _isLoading = false; // "İnternete gitti, cevap bekliyoruz" animasyonu için
-  final String apiKey = dotenv.env['API_KEY'] ?? 'key_is_not_found';
-  // İnternetteki OCR servisine resmi gönderip yazıyı alma fonksiyonu
-  Future<void> _extractTextFromImage() async {
-    // Eğer resim seçilmemişse boşuna çalışma, geri dön
-    if (_selectedImage == null) return;
 
-    // Yükleniyor durumunu başlat (ekrana dönen çark koymak için)
+  List<BookResult> _bookResults = [];
+  bool _isLoading = false;
+  String _statusMessage = '';
+
+  // ── 1. Resim seç ──────────────────────────────
+  Future<void> _pickImage() async {
+    final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
+    if (image == null) return;
+
+    // readAsBytes() hem web'de hem mobilde çalışır; File() gerektirmez.
+    final bytes = await image.readAsBytes();
+
+    setState(() {
+      _selectedImage = image;
+      _imageBytes = bytes;
+      _bookResults = [];
+      _statusMessage = '';
+    });
+  }
+
+  // ── 2. Ana işlem: Gemini → Google Books ───────
+  Future<void> _processImage() async {
+    if (_selectedImage == null || _imageBytes == null) return;
+
     setState(() {
       _isLoading = true;
-      _extractedText = null; // Eski yazıyı temizle
+      _bookResults = [];
+      _statusMessage = 'Gemini resmi analiz ediyor...';
     });
 
     try {
-      final bytes = await _selectedImage!.readAsBytes();
-      
-      // 2. Base64 formatına çevir (Resmi internette taşınabilir güvenli bir metne dönüştürür) bytlara çevirince sadece 0 ve 1leri görürüz ama base64Image yapınca string halinde değişik metinlere dönüşür 
-      final String base64Image = "data:image/jpeg;base64," + base64Encode(bytes);//"data:image/jpeg;base64," kısmı şunu der ben apiden uzun bir metin gönderiyorum ama slında bu base64 ile şifrelenmiş bir jpeg remidir haberin olsun knk der
+      // ── 2a. API anahtarını al ──
+      final geminiKey = dotenv.env['GEMINI_API_KEY'];
+      if (geminiKey == null || geminiKey.isEmpty) {
+        _showError('.env dosyasında GEMINI_API_KEY bulunamadı!');
+        return;
+      }
 
-      // 3. Postacıyı (http) OCR.space adresine paketlerle beraber gönder
-      var response = await http.post(
-        Uri.parse('https://api.ocr.space/parse/image'),//burası diyor ki ben bu linke düz metin atıyorum ya burada eskid en sıkıntı çıkıyormuş o yüzden parse yani bölüyor https bir api.ocr.space ayrı /parse/image ayrı bölünüyor sonra da resim stringi ile Uri nesnesi oluşturup postacıya yani http.post teslim ediyor
-        body: {
-          'apikey': apiKey,
-          'base64Image': base64Image,
-          'language': 'eng', // Türkçe karakterleri (ş, ç, ğ) düzgün okuması için normalde tur yazıyordu 
-          'scale' : 'true',
-          'OCREngine': '5',
-        },
+      // ── 2b. Gemini modeli ──
+      final model = GenerativeModel(
+        model: 'gemini-2.5-flash',
+        apiKey: geminiKey,
       );
 
-      // 4. API'den gelen İngilizce/JSON cevabı Flutter'ın anlayacağı sözlüğe (Map/Dictionary) çevirir artık elimizde key value ikililerden oluşan bi yapıda verir
-      var result = jsonDecode(response.body);
+      final mimeType = _selectedImage!.name.toLowerCase().endsWith('.png')
+          ? 'image/png'
+          : 'image/jpeg';
 
-      // 5. Eğer hata yoksa okunan metni al ve ekranı güncelle
-      if (result['IsErroredOnProcessing'] == false) {
+      final imagePart = DataPart(mimeType, _imageBytes!);
+
+      // ── 2c. Prompt: sadece "Kitap Adı - Yazar" listesi iste ──
+      // Her satır ayrı bir kitap olacak şekilde kesin format belirtiyoruz.
+      // Bu sayede parse etmek kolaylaşır.
+      final prompt = TextPart(
+        "Bu resimde bir kitaplık var. Görünen kitapların isimlerini ve yazarlarını tespit et.\n"
+        "KURALLAR:\n"
+        "- Her kitabı yeni satıra yaz.\n"
+        "- Format kesinlikle şu şekilde olmalı: Kitap Adı | Yazar\n"
+        "- Yazar bilinmiyorsa: Kitap Adı | Bilinmiyor\n"
+        "- ISBN, barkod, yayınevi logosu, anlamsız harf/sayı kombinasyonlarını yoksay.\n"
+        "- Sadece kitap isim-yazar listesini yaz, başka hiçbir şey yazma.\n"
+        "- Açıklama, giriş cümlesi, numara ekleme.",
+      );
+
+      final response = await model.generateContent([
+        Content.multi([prompt, imagePart])
+      ]);
+
+      final rawText = response.text ?? '';
+      if (rawText.isEmpty) {
+        _showError('Gemini resimden metin çıkaramadı.');
+        return;
+      }
+
+      // ── 2d. Gemini çıktısını parse et ──
+      final lines = rawText
+          .split('\n')
+          .map((l) => l.trim())
+          .where((l) => l.isNotEmpty && l.contains('|'))
+          .toList();
+
+      if (lines.isEmpty) {
+        _showError('Resimde okunabilir kitap bulunamadı.');
+        return;
+      }
+
+      // ── 2e. Her kitap için Google Books'ta doğrula ──
+      setState(() => _statusMessage =
+          'Google Books ile doğrulanıyor (${lines.length} kitap)...');
+
+      final results = <BookResult>[];
+      for (final line in lines) {
+        final parts = line.split('|');
+        final rawTitle = parts[0].trim();
+        final rawAuthor = parts.length > 1 ? parts[1].trim() : '';
+
+        final bookResult = await _searchGoogleBooks(rawTitle, rawAuthor);
+        results.add(bookResult);
+
+        // Her sonuç geldiğinde ekranı güncelle (anlık geri bildirim)
         setState(() {
-          // ParsedResults içindeki ilk sayfanın ParsedText'ini alıyoruz (API'nin kuralı bu)
-          _extractedText = result['ParsedResults'][0]['ParsedText'];//parsedresults kısmı apinin okuduğu sayfanın listesidir, [0] bizim gönderediğimiz resim tek sayfa old için listenin ilk elemannı alıyoruz zaten bir tane vardı; parsedtext o ilk sayfanın içindeki asıl okunan metin
-          List<String> rawLines = _extractedText!.split('\n');
-          _bookLines = rawLines.where((line)=> line.trim().length>2).toList();
-        });
-      } else {
-        // API bir hata döndürdüyse (örn: resim çok bulanık)
-        setState(() {//neden set state içinde yazdık: yazı değişkene atandığı anda flutter ekranı güncellendsin ve yazıyı ekrana çizsin
-          _extractedText = "Hata oluştu: ${result['ErrorMessage']}";
+          _bookResults = List.from(results);
+          _statusMessage =
+              'Doğrulanıyor: ${results.length}/${lines.length}';
         });
       }
+
+      setState(() {
+        _bookResults = results;
+        _statusMessage =
+            '${results.where((r) => r.found).length}/${results.length} kitap doğrulandı.';
+      });
     } catch (e) {
-      // İnternet kopması gibi sistemsel bir hata olursa
-      setState(() {
-        _extractedText = "Bağlantı veya çeviri hatası: $e";
-      });
+      _showError('Hata oluştu: $e');
     } finally {
-      // İşlem ister başarılı olsun ister hatalı, yükleme durumunu bitir
-      setState(() {
-        _isLoading = false;
-      });
+      setState(() => _isLoading = false);
     }
   }
 
-  // Cihazdan resim seçme fonksiyonu
-  Future<void> _pickImage() async { //neden async ve Future : galeriye gitmek kullanıcının klasörlerler arasında gezinme tıklama zaman alır jsteki promise ile mantığı aynı
-    final XFile? image = await _picker.pickImage(source: ImageSource.gallery); // kulllancı galeriden ImageSource.gallery bir resim seçene kadar veya iptal edip çıkaan kaar bu satırda bekle diyor işlem bitince de seçilen dosyayı image adında geçici değişkene ata
-    if (image != null) {
-      setState(() {
-        _selectedImage = image;
-      });
-      //neden set state içine yazıldı? set state olmasaydı  arka planda veri gümcellenirdi amam ekrandaki görüntü değişmezdi heniz resim seçilmedi yazısı kalmaya devam ederdi biz bunu state içine yazarak flutter motoruna şunu düyoruz hey flutter benim _selectedImage değişkenimin değeri değişti Lütfen bu sayfayı yeni verilerle baştan aşağı tekrar çiz bu sayede boş gri alan gidiyor benim seçtiğim resim geliyor
+  // ── 3. Google Books API sorgusu ───────────────
+  Future<BookResult> _searchGoogleBooks(
+      String title, String author) async {
+    // Sorgu: başlık + varsa yazar kombinasyonu
+    final booksKey = dotenv.env['BOOKS_API_KEY'] ?? '';
+
+    final query = author.isNotEmpty && author != 'Bilinmiyor'
+        ? Uri.encodeComponent('intitle:$title inauthor:$author')
+        : Uri.encodeComponent('intitle:$title');
+
+    final url =
+        'https://www.googleapis.com/books/v1/volumes?q=$query&maxResults=1&printType=books&key=$booksKey';
+
+    try {
+      final response = await http
+          .get(Uri.parse(url))
+          .timeout(const Duration(seconds: 8));
+
+      if (response.statusCode != 200) {
+        return BookResult(rawTitle: title, found: false);
+      }
+
+      final data = jsonDecode(response.body);
+      final items = data['items'] as List?;
+
+      if (items == null || items.isEmpty) {
+        return BookResult(rawTitle: title, found: false);
+      }
+
+      final volumeInfo = items[0]['volumeInfo'] as Map<String, dynamic>;
+      final confirmedTitle = volumeInfo['title'] as String?;
+      final authors = volumeInfo['authors'] as List?;
+      final confirmedAuthor =
+          authors != null ? authors.join(', ') : 'Bilinmiyor';
+
+      return BookResult(
+        rawTitle: title,
+        confirmedTitle: confirmedTitle,
+        author: confirmedAuthor,
+        found: true,
+      );
+    } catch (_) {
+      // Timeout veya ağ hatası: bulunamadı olarak işaretle
+      return BookResult(rawTitle: title, found: false);
     }
   }
 
-  @override // _HomePAgeState classı flutterın kendi içinde olan State adındaki çok geniş ve temel bi sınıftan türetildi  yani flutterın orjinal State sınfıı içinde zaten boş bir buil fonk vardı ancak orj fonk ekrana bir şey çizemez boş durur override yazarak derleyeciye ben onun üstüne yazıyorum diyorum 
-  Widget build(BuildContext context) { //flutterda yer kaplayan her şey widget, build metodu flutter motoruna bu sayfa ekranda nasıl gözükecek bana widger haritası ver der ve içine yazılan her şey ekrana çizilir
-    return Scaffold( //Scaffold(...) iskele demektir, mobil veya web uygulamasında boş sayfa açıyor sayfa üstünde bi nav bar yani header ortasında body vs vs gelir Scaffold standart layout hazır olarak veren aan şablon htmldeki <body> gibi düşün
+  // ── 4. Excel oluştur ve indir ─────────────────
+  Future<void> _exportToExcel() async {
+    if (_bookResults.isEmpty) return;
+
+    final excel = xl.Excel.createExcel();
+    final sheet = excel['Kitaplarım'];
+
+    // Başlık satırı
+    sheet.appendRow([
+      xl.TextCellValue('Ham Başlık (Fotoğraftan)'),
+      xl.TextCellValue('Doğrulanmış Başlık'),
+      xl.TextCellValue('Yazar'),
+      xl.TextCellValue('Durum'),
+    ]);
+
+    // Stil: başlık satırını kalın yap
+    for (int col = 0; col < 4; col++) {
+      final cell = sheet.cell(
+        xl.CellIndex.indexByColumnRow(columnIndex: col, rowIndex: 0),
+      );
+      cell.cellStyle = xl.CellStyle(bold: true);
+    }
+
+    // Veri satırları
+    for (final book in _bookResults) {
+      sheet.appendRow([
+        xl.TextCellValue(book.rawTitle),
+        xl.TextCellValue(book.confirmedTitle ?? '-'),
+        xl.TextCellValue(book.author ?? '-'),
+        xl.TextCellValue(book.found ? '✓ Doğrulandı' : '✗ Bulunamadı'),
+      ]);
+    }
+
+    // Sütun genişlikleri
+    sheet.setColumnWidth(0, 35);
+    sheet.setColumnWidth(1, 35);
+    sheet.setColumnWidth(2, 25);
+    sheet.setColumnWidth(3, 15);
+
+    // Varsayılan boş sayfayı sil
+    excel.delete('Sheet1');
+
+    final bytes = excel.encode();
+    if (bytes == null) return;
+
+    if (kIsWeb) {
+      // Web: Blob + anchor trick ile indir
+      final blob = html.Blob([Uint8List.fromList(bytes)],
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      final url = html.Url.createObjectUrlFromBlob(blob);
+      final anchor = html.AnchorElement(href: url)
+        ..setAttribute('download', 'kitaplarim.xlsx')
+        ..click();
+      html.Url.revokeObjectUrl(url);
+    } else {
+      // Mobil: Basit bildirim — dosya kaydetme için path_provider eklenebilir
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content:
+                  Text('Mobil kaydetme için path_provider entegrasyonu gerekli.')),
+        );
+      }
+    }
+  }
+
+  void _showError(String message) {
+    setState(() {
+      _statusMessage = message;
+      _isLoading = false;
+    });
+  }
+
+  // ── UI ───────────────────────────────────────
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Scaffold(
+      backgroundColor: colorScheme.surface,
       appBar: AppBar(
-        title: const Text( //üst barın içine yazılancak metni belirler
-        //Text widgeti flutterda ekrana yazı yazdırmanın tek yolu
-          'library to excel',
-          style: TextStyle(fontWeight: FontWeight.bold),
+        title: const Text(
+          '📚 Library to Excel',
+          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 20),
         ),
-        centerTitle: true, //andoidde başlıklar varsayılan sola dayali iosta da ortadadır tru diyerek her platformda ortada durduruyoruz
-        backgroundColor: Colors.purple, //üst bar arka plan rengi
-        foregroundColor: Colors.white, //üstündeki yazı ve ikonların rengini beyaz yapar
+        centerTitle: true,
+        backgroundColor: colorScheme.primaryContainer,
+        foregroundColor: colorScheme.onPrimaryContainer,
+        elevation: 0,
       ),
-      body: Center(//dikey ve yatayda centerlıyor
-        child: SingleChildScrollView(
-          child: Column( //child bunun içine tek bir eleman koyacağım demek children ise buunun içine birden fazla eleman koyacağım(liste şeklinde) demek
-        //Column ise içindeki elemanları yukarıdan aşağıya doğru alt alta dizdirir
-          mainAxisAlignment: MainAxisAlignment.center, //Colum içindeki elemanarın yukarıya aşağıya yapıştırtmaz
-          children: [
-            // Resmin gösterileceği alan
-            Container( //htmldeki div karşılığı içine başka şeyler koyabildiğin genişlik yükseklik rengini ayarlayabildiğin boş kutu, biz bunu çerçeve olarak kullanıyoruz
-              width: 300, //kutu boyutları sabit
-              height: 300,
-              decoration: BoxDecoration( //makyaj css kısmı burası
-                color: Colors.grey[200], //kutu arka plan rengi 200 açıklık koyuluk berlirtir
-                border: Border.all(color: Colors.grey.shade400, width: 2), //çerçeve
-                borderRadius: BorderRadius.circular(16), //yuvarlatma 16 pixel çapında yuvarlatır 
-              ),
-              child: _selectedImage == null
-                  ? const Column( //const Column(...) içndekileri alt alta diziyor
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.image, size: 50, color: Colors.grey),
-                        //flutterın kendi kütüpünden hazır resim ikonu çağır
-                        SizedBox(height: 10), //html cssteki margin veya boş bir div yani ikon ve yazı arası 10 pixel dikey boşluk 
-                        Text('Henüz bir resim seçilmedi', style: TextStyle(color: Colors.grey)),
-                      ],
-                    )
-                  //iki nokta sonrasında ekran güncellenecek setstate çalışır 
-                  : ClipRRect( //cssteki overflow:hidden, yani içine konulan resmi belirttiğimiz yarıçapta krıpar neden 14 çünkü dış kutu  yuvarlaklık 16 2 pixel kenarlık içeriye 14 kalıyor 
-                      borderRadius: BorderRadius.circular(14),
-                      // Web ve Mobil için farklı resim gösterme metodları
-                      child: kIsWeb //webte mi çalışıyor
-                          ? Image.network(_selectedImage!.path, fit: BoxFit.cover) //urlden çekeriz
-                          //! dartta null assertion yani boş olmama garantisi sisteme diyoruz ki biliyorum bu değişken başta null olabilirdi ama ben üstte kontrol ettim şuan kesinlikle içi dolu bana güven ve pathi al
-                          //fit: BoxFit.cover seçilen resim dikdörtgen bile olsa bizim 300*300 kare kutunun en boyunu bozmadan kutuyu tamamen kaplayacak kendini sığdırır fazlalıklar dışarda bırakılır
-                          : Image.file(File(_selectedImage!.path), fit: BoxFit.cover), //gerçek dosya yolundan geliyorsa image.file ile çekilir
-                    ),
-            ),
-            const SizedBox(height: 30),//container ile buton yapışmasın diye 30 pixelli görünmez kutu 
-            // Resim seçme butonu
-            ElevatedButton.icon(
-              onPressed: _pickImage, //eğer biz _pickImage() deseydij sayfa açılır açılmaz o fonk kendi kendine çalışır galeriyi açardı biz ise butona basılınca açılsın istiyoruz o yüzden fonksiyonun referansını verdik 
-              icon: const Icon(Icons.upload_file), //butonun solundaki ikon flutuer içi hazır ikon çok
-              label: const Text(
-                'Cihazdan Resim Seç',//buton üzerindeki ana metin, .icon türündeki butonlarda metin kısmı child yerine label adını alır
-                style: TextStyle(fontSize: 16),
-              ),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12), //iç boşluk
-                elevation: 2, //butonun arka plandan ne kadar havada duracağını yani alttaki gölge (box.shadow) derinliğini belirler
-              ),
-            ),
-            const SizedBox(height: 20),
-            
-            // Eğer resim seçilmişse "Yazıları Oku" butonunu göster
-            if (_selectedImage != null)
-              _isLoading
-                  ? const CircularProgressIndicator() // İnternetteyken dönen çark 
-                  : ElevatedButton.icon(
-                      onPressed: _extractTextFromImage, //üstüne basılınca bu fonksiyonu yaz 
-                      icon: const Icon(Icons.document_scanner),
-                      label: const Text(
-                        'Resimdeki Yazıları Oku',
-                        style: TextStyle(fontSize: 16),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.orange, // Farklı bir renk
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                      ),
-                    ),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 800),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // ── Resim kutusu ──
+                _buildImageBox(colorScheme),
+                const SizedBox(height: 24),
 
-            const SizedBox(height: 20),
-
-            // Eğer API'den yazı geldiyse onu gösteren yeşil kutu
-            if (_extractedText != null)
-              Container(
-                width: 1000,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.green.shade50,
-                  border: Border.all(color: Colors.green.shade400, width: 2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
+                // ── Butonlar ──
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Text(
-                      'Okunan Metin:',
-                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green),
+                    FilledButton.tonalIcon(
+                      onPressed: _isLoading ? null : _pickImage,
+                      icon: const Icon(Icons.upload_file_rounded),
+                      label: const Text('Fotoğraf Seç'),
                     ),
-                    const SizedBox(height: 10),
-                    Text(
-                      _extractedText!,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 14),
-                    ),
+                    const SizedBox(width: 16),
+                    if (_selectedImage != null)
+                      FilledButton.icon(
+                        onPressed: _isLoading ? null : _processImage,
+                        icon: _isLoading
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.auto_fix_high_rounded),
+                        label: Text(_isLoading ? 'İşleniyor...' : 'Analiz Et'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: colorScheme.primary,
+                        ),
+                      ),
                   ],
                 ),
-              ),
-          ],
-        ),
+
+                // ── Durum mesajı ──
+                if (_statusMessage.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    _statusMessage,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: _statusMessage.startsWith('Hata')
+                          ? colorScheme.error
+                          : colorScheme.secondary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+
+                // ── Sonuç tablosu ──
+                if (_bookResults.isNotEmpty) ...[
+                  const SizedBox(height: 32),
+                  _buildResultTable(colorScheme),
+                  const SizedBox(height: 16),
+                  Center(
+                    child: FilledButton.icon(
+                      onPressed: _exportToExcel,
+                      icon: const Icon(Icons.download_rounded),
+                      label: const Text('Excel Olarak İndir'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.green.shade700,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
+
+  Widget _buildImageBox(ColorScheme colorScheme) {
+    return Container(
+      height: 280,
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceVariant,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: colorScheme.outlineVariant,
+          width: 2,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: _imageBytes == null
+          ? Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.photo_library_outlined,
+                    size: 56, color: colorScheme.outline),
+                const SizedBox(height: 12),
+                Text(
+                  'Kitaplığın fotoğrafını seç',
+                  style: TextStyle(color: colorScheme.outline, fontSize: 16),
+                ),
+              ],
+            )
+          // Image.memory: dart:io gerektirmez, web + mobil çalışır
+          : Image.memory(_imageBytes!, fit: BoxFit.cover, width: double.infinity),
+    );
+  }
+
+  Widget _buildResultTable(ColorScheme colorScheme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Bulunan Kitaplar (${_bookResults.length})',
+          style: Theme.of(context)
+              .textTheme
+              .titleMedium
+              ?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: colorScheme.outlineVariant),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Table(
+            columnWidths: const {
+              0: FlexColumnWidth(3),
+              1: FlexColumnWidth(2),
+              2: FixedColumnWidth(90),
+            },
+            children: [
+              // Başlık satırı
+              TableRow(
+                decoration:
+                    BoxDecoration(color: colorScheme.primaryContainer),
+                children: [
+                  _tableHeader('Kitap Adı'),
+                  _tableHeader('Yazar'),
+                  _tableHeader('Durum'),
+                ],
+              ),
+              // Veri satırları
+              ..._bookResults.asMap().entries.map((entry) {
+                final index = entry.key;
+                final book = entry.value;
+                final isEven = index % 2 == 0;
+                return TableRow(
+                  decoration: BoxDecoration(
+                    color: isEven
+                        ? colorScheme.surface
+                        : colorScheme.surfaceVariant.withOpacity(0.4),
+                  ),
+                  children: [
+                    _tableCell(
+                        book.confirmedTitle ?? book.rawTitle, bold: true),
+                    _tableCell(book.author ?? '-'),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 10, horizontal: 8),
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: book.found
+                                ? Colors.green.shade100
+                                : Colors.red.shade100,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            book.found ? '✓' : '✗',
+                            style: TextStyle(
+                              color: book.found
+                                  ? Colors.green.shade800
+                                  : Colors.red.shade800,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              }),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _tableHeader(String text) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+        child: Text(
+          text,
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            color: Theme.of(context).colorScheme.onPrimaryContainer,
+          ),
+        ),
+      );
+
+  Widget _tableCell(String text, {bool bold = false}) => Padding(
+        padding:
+            const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+        child: Text(
+          text,
+          style: TextStyle(
+            fontWeight: bold ? FontWeight.w600 : FontWeight.normal,
+            fontSize: 13.5,
+          ),
+        ),
+      );
+}
+
+class HomePage extends StatefulWidget {
+  const HomePage({Key? key}) : super(key: key);
+
+  @override
+  State<HomePage> createState() => _HomePageState();
 }
