@@ -1,3 +1,1 @@
-# flutter_application_2
-
-A new Flutter project.
+Hey! This project is your physical library photo to excel converter. 
