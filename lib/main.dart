@@ -5,6 +5,14 @@ import 'dart:io'; // dart dilinin standart input output kütüpanesidir
 import 'package:flutter/foundation.dart' show kIsWeb; //bu bize şuan uygulamaının o an bi web tarayıcısında mı yoksa mobilde mi çalıştığını söyler, webdeysek resmi şöyle gönder mobildeysek böyle göster diyebilmek için ihtiyacımız var
 import 'package:http/http.dart' as http; //http kullanmadan önce hep http. yazılacak 
 import 'dart:convert';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
+Future<void> main() async {
+  // Uygulama başlamadan önce .env dosyasını yüklüyoruz
+  await dotenv.load(fileName: ".env");
+  
+  runApp(const MyApp());
+}
 
 void main() { //derleyici kodu ilk mainden okumaya başlar
   runApp(const MyApp()); //görevi içine verdiğimiz ana iskeleti MyApp alıp ekrana çizmektir (render etmek)
@@ -56,7 +64,7 @@ class _HomePageState extends State<HomePage> {//HomePage widgetinin state classi
   String? _extractedText; // API'den dönecek olan okunan yazıyı tutacak
   List<String> _bookLines = [];
   bool _isLoading = false; // "İnternete gitti, cevap bekliyoruz" animasyonu için
-  final String apiKey = 'K86979645388957';
+  final String apiKey = dotenv.env['API_KEY'] ?? 'key_is_not_found';
   // İnternetteki OCR servisine resmi gönderip yazıyı alma fonksiyonu
   Future<void> _extractTextFromImage() async {
     // Eğer resim seçilmemişse boşuna çalışma, geri dön
